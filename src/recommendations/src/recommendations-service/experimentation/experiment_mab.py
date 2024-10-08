@@ -52,20 +52,10 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
         for item in items:
             correlation_id = self._create_correlation_id(user_id, variation_idx, rank)
 
-            item_experiment = {
-                'id': self.id,
-                'feature': self.feature,
-                'name': self.name,
-                'type': self.type,
-                'variationIndex': variation_idx,
-                'resultRank': rank,
-                'correlationId': correlation_id
-            }
-
+            item_experiment = {'id': self.id, 'feature': self.feature, 'name': self.name,'type': self.type, 'variationIndex': variation_idx, 'resultRank': rank, 'correlationId': correlation_id}
             item.update({
                 'experiment': item_experiment
             })
-
             rank += 1
 
         if tracker is not None:
@@ -106,6 +96,11 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
         # This leads to more exploration because variations with > uncertainty can then be selected
         theta = np.random.beta(conversions + 1, exposures + 1)
 
+	try:
+        self._log_experiment_data(exposures, conversions, theta)
+	except Exception as e:
+	    log.error(f"Error logging experiment data: {e}")
+
         # Select variation index with highest posterior p of converting
         return np.argmax(theta)
 
@@ -123,3 +118,5 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
             log.debug(f"Logged experiment data at {timestamp}")
         except ClientError as e:
             log.error(f"Failed to log experiment data: {e}")
+	except Exception as e:
+	    log.error(f"Unexpected error during the logging: {e}")
