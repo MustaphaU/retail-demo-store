@@ -14,6 +14,11 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
     """ Implementation of the multi-armed bandit problem using the Thompson Sampling approach
     to exploring variations to identify and exploit the best performing variation
     """
+    def __init__(self, table, **data):
+        super().__init__(table, **data)
+        # Initialize DynamoDB resource
+        self.dynamodb = boto3.resource('dynamodb')
+        self.log_table = self.dynamodb.Table('experiment_logs')
 
     def get_items(self, user_id, current_item_id=None, item_list=None, num_results=10, tracker=None, filter_values=None, context=None, timestamp: datetime = None, promotion: Dict = None):
         if not user_id:
@@ -103,3 +108,18 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
 
         # Select variation index with highest posterior p of converting
         return np.argmax(theta)
+
+    def _log_experiment_data(self, exposures, conversions, theta):
+        timestamp = datetime.utcnow().isoformat()
+        item = {
+            'experiment_id': self.id,
+            'timestamp': timestamp,
+            'exposures': exposures.tolist(),
+            'conversions': conversions.tolist(),
+            'theta': theta.tolist()
+        }
+        try:
+            self.log_table.put_item(Item=item)
+            log.debug(f"Logged experiment data at {timestamp}")
+        except ClientError as e:
+            log.error(f"Failed to log experiment data: {e}")
