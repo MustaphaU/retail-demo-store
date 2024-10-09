@@ -5,6 +5,9 @@ import numpy as np
 import logging
 from datetime import datetime
 from typing import Dict
+import boto3  # Added import statement
+
+from botocore.exceptions import ClientError
 
 from experimentation.experiment import BuiltInExperiment
 
@@ -20,7 +23,9 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
         self.dynamodb = boto3.resource('dynamodb')
         self.log_table = self.dynamodb.Table('experiment_logs')
 
-    def get_items(self, user_id, current_item_id=None, item_list=None, num_results=10, tracker=None, filter_values=None, context=None, timestamp: datetime = None, promotion: Dict = None):
+    def get_items(self, user_id, current_item_id=None, item_list=None, num_results=10,
+                  tracker=None, filter_values=None, context=None, timestamp: datetime = None,
+                  promotion: Dict = None):
         if not user_id:
             raise Exception('user_id is required')
         if len(self.variations) < 2:
@@ -52,7 +57,15 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
         for item in items:
             correlation_id = self._create_correlation_id(user_id, variation_idx, rank)
 
-            item_experiment = {'id': self.id, 'feature': self.feature, 'name': self.name,'type': self.type, 'variationIndex': variation_idx, 'resultRank': rank, 'correlationId': correlation_id}
+            item_experiment = {
+                'id': self.id,
+                'feature': self.feature,
+                'name': self.name,
+                'type': self.type,
+                'variationIndex': variation_idx,
+                'resultRank': rank,
+                'correlationId': correlation_id
+            }
             item.update({
                 'experiment': item_experiment
             })
@@ -93,15 +106,14 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
             conversions[i] = int(variation.config.get('conversions', 0))
 
         # Sample from posterior (this is the Thompson Sampling approach)
-        # This leads to more exploration because variations with > uncertainty can then be selected
         theta = np.random.beta(conversions + 1, exposures + 1)
 
-	try:
-        self._log_experiment_data(exposures, conversions, theta)
-	except Exception as e:
-	    log.error(f"Error logging experiment data: {e}")
+        try:
+            self._log_experiment_data(exposures, conversions, theta)
+        except Exception as e:
+            log.error(f"Error logging experiment data: {e}")
 
-        # Select variation index with highest posterior p of converting
+        # Select variation index with highest posterior probability of converting
         return np.argmax(theta)
 
     def _log_experiment_data(self, exposures, conversions, theta):
@@ -118,5 +130,5 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
             log.debug(f"Logged experiment data at {timestamp}")
         except ClientError as e:
             log.error(f"Failed to log experiment data: {e}")
-	except Exception as e:
-	    log.error(f"Unexpected error during the logging: {e}")
+        except Exception as e:
+            log.error(f"Unexpected error during the logging: {e}")
