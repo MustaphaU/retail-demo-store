@@ -106,7 +106,7 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
 
         item = {
             'exposures': exposures.tolist(),
-            'conversions': conversions.tolist,
+            'conversions': conversions.tolist(),
             'theta': theta.tolist()
         }
         # Select variation index with highest posterior p of converting
