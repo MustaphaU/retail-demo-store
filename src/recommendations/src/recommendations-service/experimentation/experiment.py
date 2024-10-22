@@ -104,9 +104,14 @@ class BuiltInExperiment(Experiment):
                 raise e
 
     def _log_experiment_iteration(self, iter_data: dict):
+
+        log.debug(f'Original iter_data: {iter_data}')
         # Ensure that the iter_data is converted to use Decimal where necessary
         iter_data = self.__convert_floats_to_decimals(iter_data)
         
+        # Log the converted iter_data
+        log.debug(f'Converted iter_data: {iter_data}')
+
         try:
             # Append the iteration data to the 'iterations' list attribute
             response = self._table.update_item(
@@ -118,7 +123,9 @@ class BuiltInExperiment(Experiment):
                 },
                 ReturnValues="UPDATED_NEW"
             )
+            log.debug(f'Update response: {response}')
         except ClientError as e:
+            log.error(f'ClientError: {e}')
             raise e
 
     def __convert_floats_to_decimals(self, obj):
