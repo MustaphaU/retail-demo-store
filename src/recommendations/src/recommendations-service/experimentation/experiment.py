@@ -8,6 +8,7 @@ from typing import Dict
 from botocore.exceptions import ClientError
 from abc import ABC, abstractmethod
 from experimentation.resolvers import ResolverFactory
+from decimal import Decimal
 
 log = logging.getLogger(__name__)
 
