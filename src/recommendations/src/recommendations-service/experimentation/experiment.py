@@ -1,103 +1,113 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: MIT-0
 
+import numpy as np
 import logging
-
 from datetime import datetime
 from typing import Dict
-from botocore.exceptions import ClientError
-from abc import ABC, abstractmethod
-from experimentation.resolvers import ResolverFactory
+
+from experimentation.experiment import BuiltInExperiment
 
 log = logging.getLogger(__name__)
 
-class Variation:
-    def __init__(self, **data):
-        self.config = data
-        self.resolver = ResolverFactory.get(**data)
+class MultiArmedBanditExperiment(BuiltInExperiment):
+    """ Implementation of the multi-armed bandit problem using the Thompson Sampling approach
+    to exploring variations to identify and exploit the best performing variation
+    """
 
-class Experiment(ABC):
-    """ Base class for all experiment types """
+    def get_items(self, user_id, current_item_id=None, item_list=None, num_results=10, tracker=None, filter_values=None, context=None, timestamp: datetime = None, promotion: Dict = None):
+        if not user_id:
+            raise Exception('user_id is required')
+        if len(self.variations) < 2:
+            raise Exception(f'Experiment {self.id} does not have 2 or more variations')
 
-    def __init__(self, **data):
-        self.id = data['id']
-        self.feature = data['feature']
-        self.name = data['name']
-        self.status = data['status']
-        self.type = data['type']
+        # Determine the variation to use.
+        variation_idx, iteration_data = self._select_variation_index()
+        log.debug(f'{self._getClassName()} - assigned user {user_id} to variation {variation_idx} for experiment {self.feature}.{self.name}')
 
-        self.variations = []
+        #log the experiment iteration
+        self._log_experiment_iteration(iteration_data)
 
-        for v in data['variations']:
-            self.variations.append(Variation(**v))
+        # Increment exposure count for variation
+        self._increment_exposure_count(variation_idx)
 
-    @abstractmethod
-    def get_items(self, user_id, current_item_id=None, item_list=None, num_results=10, tracker=None, filter_values = None, context = None, timestamp: datetime = None, promotion: Dict = None):
-        """ For a given user, returns item recommendations for this experiment along with experiment tracking/correlation information """
-        pass
+        # Fetch recommendations using the variation's resolver
+        variation = self.variations[variation_idx]
 
-    @abstractmethod
-    def track_conversion(self, correlation_id: str, timestamp: datetime) -> int:
-        """ Call this method to track a conversion/outcome for an experiment """
-        pass
+        resolve_params = {
+            'user_id': user_id,
+            'product_id': current_item_id,
+            'product_list': item_list,
+            'num_results': num_results,
+            'filter_values': filter_values,
+            'context': context,
+            'promotion': promotion
+        }
+        items = variation.resolver.get_items(**resolve_params)
 
-    def _create_correlation_id(self, user_id: str, variation_index: int, result_rank: int) -> str:
-        """ Returns an identifier representing a recommended item for an experiment """
-        return f'{self.id}~{user_id}~{variation_index}~{result_rank}'
+        # Inject experiment details into recommended items list
+        rank = 1
+        for item in items:
+            correlation_id = self._create_correlation_id(user_id, variation_idx, rank)
 
-    def _getClassName(self):
-        return self.__class__.__name__
+            item_experiment = {
+                'id': self.id,
+                'feature': self.feature,
+                'name': self.name,
+                'type': self.type,
+                'variationIndex': variation_idx,
+                'resultRank': rank,
+                'correlationId': correlation_id
+            }
 
-class BuiltInExperiment(Experiment):
-    """ Base class for all built-in experiment types """
+            item.update({
+                'experiment': item_experiment
+            })
 
-    def __init__(self, table, **data):
-        super().__init__(**data)
-        self._table = table
+            rank += 1
 
-    def track_conversion(self, correlation_id: str, timestamp: datetime) -> int:
-        """ Call this method to track a conversion/outcome for an experiment """
-        correlation_bits = correlation_id.split('~')
-        user_id = correlation_bits[1]
-        variation_index = int(correlation_bits[2])
-        result_rank = int(correlation_bits[3])
-
-        if variation_index < 0 or variation_index >= len(self.variations):
-            raise Exception('variation_index is out of bounds')
-
-        log.debug(f'Incrementing conversion count for variation {variation_index}, rank {result_rank}, based on user {user_id}')
-
-        return self._increment_convert_count(variation_index)
-
-    def _increment_exposure_count(self, variation: int, count: int = 1) -> int:
-        """ Call this method when a user is exposed to a variation of an experiment """
-        return self.__increment_variation_count('exposures', variation, count)
-
-    def _increment_convert_count(self, variation: int, count: int = 1) -> int:
-        """ Call this method when a user converts for a variation of an experiment """
-        return self.__increment_variation_count('conversions', variation, count)
-
-    def __increment_variation_count(self, field_name: str, variation: int, count: int = 1) -> int:
-        try:
-            response = self._table.update_item(
-                Key={'id': self.id},
-                UpdateExpression=f'SET variations[{variation}].{field_name} = variations[{variation}].{field_name} + :incr',
-                ExpressionAttributeValues={
-                    ':incr': count
-                },
-                ReturnValues='UPDATED_NEW'
-            )
-            return int(response['Attributes']['variations'][0][field_name])
-        except ClientError as e:
-            if e.response['Error']['Code'] == 'ValidationException':
-                response = self._table.update_item(
-                    Key={'id': self.id},
-                    UpdateExpression=f'SET variations[{variation}].{field_name} = :incr',
-                    ExpressionAttributeValues={
-                        ':incr': count
+        if tracker is not None:
+            # Track exposure details for analysis
+            timestamp = datetime.now() if not timestamp else timestamp
+            event = {
+                'event_type': 'Experiment Exposure',
+                'event_timestamp': int(round(timestamp.timestamp() * 1000)),
+                'attributes': {
+                    'user_id': user_id,
+                    'experiment': {
+                        'id': self.id,
+                        'feature': self.feature,
+                        'name': self.name,
+                        'type': self.type
                     },
-                    ReturnValues='UPDATED_NEW'
-                )
-                return int(response['Attributes']['variations'][0][field_name])
-            else:
-                raise e
+                    'variation_index': variation_idx,
+                    'variation': variation.config
+                }
+            }
+
+            tracker.log_exposure(event)
+
+        return items
+
+    def _select_variation_index(self):
+        """ Selects the variation using Thompson Sampling """
+        variation_count = len(self.variations)
+        exposures = np.zeros(variation_count)
+        conversions = np.zeros(variation_count)
+
+        for i in range(variation_count):
+            variation = self.variations[i]
+            exposures[i] = int(variation.config.get('exposures', 0))
+            conversions[i] = int(variation.config.get('conversions', 0))
+
+        # Sample from posterior (this is the Thompson Sampling approach)
+        # This leads to more exploration because variations with > uncertainty can then be selected
+        theta = np.random.beta(conversions + 1, exposures + 1)
+
+        item = {
+            'exposures': exposures.tolist(),
+            'conversions': conversions.tolist(),
+            'theta': theta.tolist()
+        }
+        # Select variation index with highest posterior p of converting
+        return [np.argmax(theta), item]
