@@ -8,6 +8,7 @@ from typing import Dict
 from botocore.exceptions import ClientError
 from abc import ABC, abstractmethod
 from experimentation.resolvers import ResolverFactory
+from decimal import Decimal
 
 log = logging.getLogger(__name__)
 
@@ -101,3 +102,38 @@ class BuiltInExperiment(Experiment):
                 return int(response['Attributes']['variations'][0][field_name])
             else:
                 raise e
+
+    def _log_experiment_iteration(self, iter_data: dict):
+
+        log.debug(f'Original iter_data: {iter_data}')
+        # Ensure that the iter_data is converted to use Decimal where necessary
+        iter_data = self.__convert_floats_to_decimals(iter_data)
+        
+        # Log the converted iter_data
+        log.debug(f'Converted iter_data: {iter_data}')
+
+        try:
+            # Append the iteration data to the 'iterations' list attribute
+            response = self._table.update_item(
+                Key={'id': self.id},
+                UpdateExpression="SET iterations = list_append(if_not_exists(iterations, :empty_list), :iter)",
+                ExpressionAttributeValues={
+                    ':iter': [iter_data],
+                    ':empty_list': []
+                },
+                ReturnValues="UPDATED_NEW"
+            )
+            log.debug(f'Update response: {response}')
+        except ClientError as e:
+            log.error(f'ClientError: {e}')
+            raise e
+
+    def __convert_floats_to_decimals(self, obj):
+        if isinstance(obj, list):
+            return [self.__convert_floats_to_decimals(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: self.__convert_floats_to_decimals(v) for k, v in obj.items()}
+        elif isinstance(obj, float):
+            return Decimal(str(obj))
+        else:
+            return obj
