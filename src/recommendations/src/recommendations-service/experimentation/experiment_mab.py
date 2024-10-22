@@ -22,11 +22,11 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
             raise Exception(f'Experiment {self.id} does not have 2 or more variations')
 
         # Determine the variation to use.
-        variation_idx = self._select_variation_index()
+        variation_idx, iteration_data = self._select_variation_index()
         log.debug(f'{self._getClassName()} - assigned user {user_id} to variation {variation_idx} for experiment {self.feature}.{self.name}')
 
         #log the experiment iteration
-        # self.__log_experiment_iteration(items)
+        self._log_experiment_iteration(iteration_data)
 
         # Increment exposure count for variation
         self._increment_exposure_count(variation_idx)
@@ -104,10 +104,10 @@ class MultiArmedBanditExperiment(BuiltInExperiment):
         # This leads to more exploration because variations with > uncertainty can then be selected
         theta = np.random.beta(conversions + 1, exposures + 1)
 
-        # item = {
-        #     'exposures': exposures.tolist(),
-        #     'conversions': conversions.tolist,
-        #     'theta': theta.tolist()
-        # }
+        item = {
+            'exposures': exposures.tolist(),
+            'conversions': conversions.tolist,
+            'theta': theta.tolist()
+        }
         # Select variation index with highest posterior p of converting
-        return np.argmax(theta)
+        return [np.argmax(theta), item]
