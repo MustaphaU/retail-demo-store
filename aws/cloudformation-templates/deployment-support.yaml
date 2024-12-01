@@ -193,6 +193,7 @@ Resources:
             response_status = cfnresponse.SUCCESS
             max_retries = 15  # Maximum number of retries - should be less than the timeout
             retries = 0
+            retry_delay = 60
             if event['RequestType'] in ['Create', 'Update']:     
               url = os.environ['ProductsServiceUrl']
               request = Request(f"{url}/init", method='POST')
@@ -203,16 +204,17 @@ Resources:
                           # exit while, success.
                           break
                   except URLError as e:
+                      last_exception = e
                       retries += 1
                       print(f"Request failed. Retrying in 30 seconds... (Attempt {retries}/{max_retries})")
                       print(f"Error: {e}")
-                      time.sleep(30)
+                      time.sleep(retry_delay)
 
               #
               if retries >= max_retries:
-                  logger.error(f"Error calling product service init: {e.code} : {e.reason}")
+                  logger.error(f"Error calling product service init after {max_retries} attempts: {last_exception}")
                   response_status = cfnresponse.FAILED
-                  response_data['Message'] = f"Resource {event['RequestType']} failed: {e}"        
+                  response_data['Message'] = f"Resource {event['RequestType']} failed after {max_retries} attempts: {last_exception}"       
                             
             cfnresponse.send(event, context, response_status, response_data)
   
